@@ -52,12 +52,14 @@
     -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%;
     background: #eef3ff; box-shadow: 0 0 0 3px rgba(143,182,255,.25); cursor: pointer;
   }
-  input[type=number] {
+  input[type=number], select {
     width: 100%; background: rgba(255,255,255,.05); border: 1px solid var(--panel-bd);
     color: var(--txt); border-radius: 8px; padding: 7px 9px; font-size: 13px; outline: none;
-    font-variant-numeric: tabular-nums;
+    font-variant-numeric: tabular-nums; -webkit-appearance: none; appearance: none; cursor: pointer;
   }
-  input[type=number]:focus { border-color: var(--accent); }
+  select { background-image: linear-gradient(45deg, transparent 50%, var(--txt-dim) 50%), linear-gradient(135deg, var(--txt-dim) 50%, transparent 50%); background-position: calc(100% - 16px) 14px, calc(100% - 11px) 14px; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+  select option { background: #11141c; }
+  input[type=number]:focus, select:focus { border-color: var(--accent); }
 
   .btnrow { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 6px; }
   .btnrow.three { grid-template-columns: 1fr 1fr 1fr; }
@@ -124,12 +126,20 @@
 
   <div class="group">Initial Drop · Noise</div>
   <div class="row">
-    <div class="lab"><span>Position noise</span><span class="val" id="posNoiseV"></span></div>
-    <input type="range" id="posNoise" min="0" max="1000" value="320" />
+    <div class="lab"><span>Spawn shape</span></div>
+    <select id="shape">
+      <option value="line" selected>Line — uniform (smooth curves)</option>
+      <option value="disk">Disk — random (clumps)</option>
+      <option value="ring">Ring</option>
+    </select>
+  </div>
+  <div class="row">
+    <div class="lab"><span>Position spread</span><span class="val" id="posNoiseV"></span></div>
+    <input type="range" id="posNoise" min="0" max="1000" value="680" />
   </div>
   <div class="row">
     <div class="lab"><span>Velocity noise</span><span class="val" id="velNoiseV"></span></div>
-    <input type="range" id="velNoise" min="0" max="1000" value="120" />
+    <input type="range" id="velNoise" min="0" max="1000" value="0" />
   </div>
   <div class="row">
     <div class="lab"><span>Drop height</span><span class="val" id="dropYV"></span></div>
@@ -375,22 +385,37 @@ function reseed() {
   vx = new Float32Array(N); vy = new Float32Array(N);
   const p = params();
   const ox = cx, oy = cy + p.dropY;
-  const baseVx = Math.cos(p.angle) * p.launch;
-  const baseVy = Math.sin(p.angle) * p.launch;
+  const ux = Math.cos(p.angle), uy = Math.sin(p.angle);   // launch direction (unit)
+  const baseVx = ux * p.launch, baseVy = uy * p.launch;
+  const shape = el('shape').value;
   for (let i = 0; i < N; i++) {
-    // tiny gaussian-ish offset so each ball is "slightly offset from each other"
-    const a = Math.random() * Math.PI * 2;
-    const r = p.posNoise * Math.sqrt(Math.random());
-    let x = ox + Math.cos(a) * r;
-    let y = oy + Math.sin(a) * r;
+    let x, y, dvx = 0, dvy = 0;
+    if (shape === 'line') {
+      // evenly spaced along a horizontal line — a smooth 1-parameter family, so
+      // the balls evolve into clean continuous curves instead of random clumps.
+      const s = N > 1 ? (i / (N - 1) - 0.5) : 0;       // -0.5 .. 0.5, uniform
+      x = ox + s * (2 * p.posNoise);
+      y = oy;
+      const sp = s * (2 * p.velNoise);                 // smooth speed gradient
+      dvx = ux * sp; dvy = uy * sp;
+    } else if (shape === 'ring') {
+      const a = (i / N) * Math.PI * 2;                 // evenly spaced on a circle
+      x = ox + Math.cos(a) * p.posNoise;
+      y = oy + Math.sin(a) * p.posNoise;
+      dvx = Math.cos(a) * p.velNoise; dvy = Math.sin(a) * p.velNoise;
+    } else {                                           // disk — random scatter
+      const a = Math.random() * Math.PI * 2;
+      const r = p.posNoise * Math.sqrt(Math.random());
+      x = ox + Math.cos(a) * r; y = oy + Math.sin(a) * r;
+      const va = Math.random() * Math.PI * 2;
+      const vr = p.velNoise * Math.sqrt(Math.random());
+      dvx = Math.cos(va) * vr; dvy = Math.sin(va) * vr;
+    }
     // keep inside the circle
     const dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
     if (d > R * 0.999) { const k = (R * 0.999) / d; x = cx + dx * k; y = cy + dy * k; }
     px[i] = x; py[i] = y;
-    const va = Math.random() * Math.PI * 2;
-    const vr = p.velNoise * Math.sqrt(Math.random());
-    vx[i] = baseVx + Math.cos(va) * vr;
-    vy[i] = baseVy + Math.sin(va) * vr;
+    vx[i] = baseVx + dvx; vy[i] = baseVy + dvy;
   }
   resetHistory();               // snapshot the original drop for rewind
   // clear canvas so the new drop starts fresh
@@ -604,6 +629,7 @@ Object.values(C).forEach(input => {
 ['posNoise','velNoise','dropY','launch','angle'].forEach(id => {
   C[id].addEventListener('change', reseed);
 });
+el('shape').addEventListener('change', reseed);
 
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
